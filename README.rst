@@ -1,9 +1,15 @@
-yaspin |Build Status| |Coverage| |Codacy| |pypi| |Versions| |Wheel| |Examples|
-==============================================================================
+|Logo|
 
-**Y**\ et **A**\ nother Terminal **Spin**\ ner for Python.
+=====================================================================
+``yaspin``: **Y**\ et **A**\ nother Terminal **Spin**\ ner for Python
+=====================================================================
 
-**Yaspin** provides a full-featured terminal spinner to show the progress during long-hanging operations.
+|Build Status| |Coverage| |Codacy| |pyup| |black-fmt|
+
+|pypi| |Versions| |Wheel| |Examples| |Downloads|
+
+
+``Yaspin`` provides a full-featured terminal spinner to show the progress during long-hanging operations.
 
 .. image:: https://raw.githubusercontent.com/pavdmyt/yaspin/master/gifs/demo.gif
 
@@ -27,15 +33,30 @@ or as a function `decorator`_:
     some_operations()
 
 
+**Yaspin** also provides an intuitive and powerful API. For example, you can easily summon a shark:
+
+.. code:: python
+
+    import time
+    from yaspin import yaspin
+
+    with yaspin().white.bold.shark.on_blue as sp:
+        sp.text = "White bold shark in a blue sea"
+        time.sleep(5)
+
+.. image:: https://raw.githubusercontent.com/pavdmyt/yaspin/master/gifs/shark.gif
+
+
 Features
 --------
 
 - No external dependencies
-- Runs at all major **CPython** versions (*2.6*, *2.7*, *3.3*, *3.4*, *3.5*, *3.6*), **PyPy** and **PyPy3**
+- Runs at all major **CPython** versions (*2.7*, *3.4*, *3.5*, *3.6*, *3.7*), **PyPy** and **PyPy3**
 - Supports all (60+) spinners from `cli-spinners`_
 - Supports all *colors*, *highlights*, *attributes* and their mixes from `termcolor`_ library
 - Easy to combine with other command-line libraries, e.g. `prompt-toolkit`_
 - Flexible API, easy to integrate with existing code
+- User-friendly API for handling POSIX `signals`_
 - Safe **pipes** and **redirects**:
 
 .. code-block:: bash
@@ -155,13 +176,20 @@ Advanced colors usage
     import time
     from yaspin import yaspin
     from yaspin.spinners import Spinners
-    from yaspin.termcolor import colored
 
     text = "Bold blink magenta spinner on cyan color"
-    # Support all termcolor features via simple closure
-    color_fn = lambda frame: colored(frame, "magenta", "on_cyan", attrs=["bold", "blink"])
+    with yaspin().bold.blink.magenta.bouncingBall.on_cyan as sp:
+        sp.text = text
+        time.sleep(3)
 
-    with yaspin(Spinners.bouncingBall, text=text, color=color_fn):
+    # The same result can be achieved by passing arguments directly
+    with yaspin(
+        Spinners.bouncingBall,
+        color="magenta",
+        on_color="on_cyan",
+        attrs=["bold", "blink"],
+    ) as sp:
+        sp.text = text
         time.sleep(3)
 
 
@@ -201,8 +229,8 @@ Change spinner properties on the fly
         sp.spinner = Spinners.arc  # spinner type
         sp.text = "Arc spinner"    # text along with spinner
         sp.color = "green"         # spinner color
-        sp.right = True            # put spinner to the right
-        sp.reverse = True          # reverse spin direction
+        sp.side = "right"          # put spinner to the right
+        sp.reversal = True         # reverse spin direction
 
         time.sleep(2)
 
@@ -288,6 +316,43 @@ HTML formats and CSS styles to the output:
         sp.ok()
 
 
+Handling POSIX `signals`_
+/////////////////////////
+
+Handling keyboard interrupts (pressing Control-C):
+
+.. code:: python
+
+    # -*- coding: utf-8 -*-
+    import time
+
+    from yaspin import kbi_safe_yaspin
+
+
+    with kbi_safe_yaspin(text="Press Control+C to send SIGINT (Keyboard Interrupt) signal"):
+        time.sleep(5)  # time consuming code
+
+
+Handling other types of signals:
+
+.. code:: python
+
+    # -*- coding: utf-8 -*-
+    import os
+    import time
+    from signal import SIGTERM, SIGUSR1
+
+    from yaspin import yaspin
+    from yaspin.signal_handlers import default_handler, fancy_handler
+
+
+    sigmap = {SIGUSR1: default_handler, SIGTERM: fancy_handler}
+    with yaspin(sigmap=sigmap, text="Handling SIGUSR1 and SIGTERM signals") as sp:
+        sp.write("Send signals using `kill` command")
+        sp.write("E.g. $ kill -USR1 {0}".format(os.getpid()))
+        time.sleep(20)  # time consuming code
+
+
 More `examples`_.
 
 
@@ -305,7 +370,7 @@ Install dev dependencies:
 
 .. code-block:: bash
 
-    pip install -r requirements-dev.txt
+    pipenv install --dev
 
 
 Lint code:
@@ -313,6 +378,13 @@ Lint code:
 .. code-block:: bash
 
     make lint
+
+
+Format code:
+
+.. code-block:: bash
+
+    make black-fmt
 
 
 Run tests:
@@ -341,6 +413,8 @@ License
 * Contains data from `cli-spinners`_: MIT License, Copyright (c) Sindre Sorhus sindresorhus@gmail.com (sindresorhus.com)
 
 
+.. |Logo| image:: https://raw.githubusercontent.com/pavdmyt/yaspin/master/static/logo_80.png
+   :alt: yaspin Logo
 .. |Build Status| image:: https://travis-ci.org/pavdmyt/yaspin.svg?branch=master
    :target: https://travis-ci.org/pavdmyt/yaspin
 .. |Coverage| image:: https://coveralls.io/repos/github/pavdmyt/yaspin/badge.svg?branch=master
@@ -355,6 +429,12 @@ License
    :target: https://pypi.org/project/yaspin/
 .. |Examples| image:: https://img.shields.io/badge/learn%20by-examples-0077b3.svg
    :target: https://github.com/pavdmyt/yaspin/tree/master/examples
+.. |pyup| image:: https://pyup.io/repos/github/pavdmyt/yaspin/shield.svg
+   :target: https://pyup.io/repos/github/pavdmyt/yaspin/
+.. |black-fmt| image:: https://img.shields.io/badge/code%20style-black-000000.svg
+   :target: https://github.com/ambv/black
+.. |Downloads| image:: https://pepy.tech/badge/yaspin
+   :target: https://pepy.tech/project/yaspin
 
 
 .. _context manager: https://docs.python.org/3/reference/datamodel.html#context-managers
@@ -364,4 +444,5 @@ License
 .. _PyPI: https://pypi.org/
 .. _🌈: https://en.wikipedia.org/wiki/Any_Colour_You_Like
 .. _examples: https://github.com/pavdmyt/yaspin/tree/master/examples
-.. _prompt-toolkit: https://github.com/jonathanslenders/python-prompt-toolkit/tree/2.0
+.. _prompt-toolkit: https://github.com/jonathanslenders/python-prompt-toolkit/
+.. _signals: https://www.computerhope.com/unix/signals.htm

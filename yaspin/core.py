@@ -11,13 +11,14 @@ from __future__ import absolute_import
 
 import functools
 import itertools
+import signal
 import sys
 import threading
 import time
 
 from .base_spinner import default_spinner
-from .compat import PY2, basestring, builtin_str, bytes, str
-from .constants import ENCODING
+from .compat import PY2, basestring, builtin_str, bytes, iteritems, str
+from .constants import COLOR_ATTRS, COLOR_MAP, ENCODING, SPINNER_ATTRS
 from .helpers import to_unicode
 from .termcolor import colored
 
@@ -42,28 +43,57 @@ class Yaspin(object):
     # Thats why in Py2, output should be encoded manually with desired
     # encoding in order to support pipes and redirects.
 
-    def __init__(self, spinner=None, text='',
-                 color=None, right=False, reverse=False):
+    def __init__(
+        self,
+        spinner=None,
+        text="",
+        color=None,
+        on_color=None,
+        attrs=None,
+        reversal=False,
+        side="left",
+        sigmap=None,
+    ):
+        # Spinner
         self._spinner = self._set_spinner(spinner)
-        self._frames = self._set_frames(self._spinner, reverse)
+        self._frames = self._set_frames(self._spinner, reversal)
         self._interval = self._set_interval(self._spinner)
         self._cycle = self._set_cycle(self._frames)
-        self._text = self._set_text(text)
+
+        # Color Specification
         self._color = self._set_color(color) if color else color
+        self._on_color = self._set_on_color(on_color) if on_color else on_color
+        self._attrs = self._set_attrs(attrs) if attrs else set()
+        self._color_func = self._compose_color_func()
 
-        self._right = right
-        self._reverse = reverse
+        # Other
+        self._text = self._set_text(text)
+        self._side = self._set_side(side)
+        self._reversal = reversal
 
+        # Helper flags
         self._stop_spin = None
         self._hide_spin = None
         self._spin_thread = None
         self._last_frame = None
 
+        # Signals
+
+        # In Python 2 signal.SIG* are of type int.
+        # In Python 3 signal.SIG* are enums.
+        #
+        # Signal     = Union[enum.Enum, int]
+        # SigHandler = Union[enum.Enum, Callable]
+        self._sigmap = sigmap if sigmap else {}  # Dict[Signal, SigHandler]
+        # Maps signals to their default handlers in order to reset
+        # custom handlers set by ``sigmap`` at the cleanup phase.
+        self._dfl_sigmap = {}  # Dict[Signal, SigHandler]
+
     #
     # Dunders
     #
     def __repr__(self):
-        repr_ = u'<Yaspin frames={0!s}>'.format(self._frames)
+        repr_ = u"<Yaspin frames={0!s}>".format(self._frames)
         if PY2:
             return repr_.encode(ENCODING)
         return repr_
@@ -83,7 +113,36 @@ class Yaspin(object):
         def inner(*args, **kwargs):
             with self:
                 return fn(*args, **kwargs)
+
         return inner
+
+    def __getattr__(self, name):
+        # CLI spinners
+        if name in SPINNER_ATTRS:
+            from .spinners import Spinners
+
+            sp = getattr(Spinners, name)
+            self.spinner = sp
+        # Color Attributes: "color", "on_color", "attrs"
+        elif name in COLOR_ATTRS:
+            attr_type = COLOR_MAP[name]
+            # Call appropriate property setters;
+            # _color_func is updated automatically by setters.
+            if attr_type == "attrs":
+                self.attrs = [name]  # calls property setter
+            if attr_type in ("color", "on_color"):
+                setattr(self, attr_type, name)  # calls property setter
+        # Side: "left" or "right"
+        elif name in ("left", "right"):
+            self.side = name  # calls property setter
+        # Common error for unsupported attributes
+        else:
+            raise AttributeError(
+                "'{0}' object has no attribute: '{1}'".format(
+                    self.__class__.__name__, name
+                )
+            )
+        return self
 
     #
     # Properties
@@ -95,7 +154,7 @@ class Yaspin(object):
     @spinner.setter
     def spinner(self, sp):
         self._spinner = self._set_spinner(sp)
-        self._frames = self._set_frames(self._spinner, self._reverse)
+        self._frames = self._set_frames(self._spinner, self._reversal)
         self._interval = self._set_interval(self._spinner)
         self._cycle = self._set_cycle(self._frames)
 
@@ -114,29 +173,52 @@ class Yaspin(object):
     @color.setter
     def color(self, value):
         self._color = self._set_color(value) if value else value
+        self._color_func = self._compose_color_func()  # update
 
     @property
-    def right(self):
-        return self._right
+    def on_color(self):
+        return self._on_color
 
-    @right.setter
-    def right(self, value):
-        self._right = value
+    @on_color.setter
+    def on_color(self, value):
+        self._on_color = self._set_on_color(value) if value else value
+        self._color_func = self._compose_color_func()  # update
 
     @property
-    def reverse(self):
-        return self._reverse
+    def attrs(self):
+        return list(self._attrs)
 
-    @reverse.setter
-    def reverse(self, value):
-        self._reverse = value
-        self._frames = self._set_frames(self._spinner, self._reverse)
+    @attrs.setter
+    def attrs(self, value):
+        new_attrs = self._set_attrs(value) if value else set()
+        self._attrs = self._attrs.union(new_attrs)
+        self._color_func = self._compose_color_func()  # update
+
+    @property
+    def side(self):
+        return self._side
+
+    @side.setter
+    def side(self, value):
+        self._side = self._set_side(value)
+
+    @property
+    def reversal(self):
+        return self._reversal
+
+    @reversal.setter
+    def reversal(self, value):
+        self._reversal = value
+        self._frames = self._set_frames(self._spinner, self._reversal)
         self._cycle = self._set_cycle(self._frames)
 
     #
     # Public
     #
     def start(self):
+        if self._sigmap:
+            self._register_signal_handlers()
+
         if sys.stdout.isatty():
             self._hide_cursor()
 
@@ -146,6 +228,10 @@ class Yaspin(object):
         self._spin_thread.start()
 
     def stop(self):
+        if self._dfl_sigmap:
+            # Reset registered signal handlers to default ones
+            self._reset_signal_handlers()
+
         if self._spin_thread:
             self._stop_spin.set()
             self._spin_thread.join()
@@ -190,7 +276,7 @@ class Yaspin(object):
         sys.stdout.write("\r")
         self._clear_line()
 
-        _text = to_unicode(text).strip()
+        _text = to_unicode(text)
         if PY2:
             _text = _text.encode(ENCODING)
 
@@ -214,7 +300,7 @@ class Yaspin(object):
     #
     def _freeze(self, final_text):
         """Stop spinner, compose last frame and 'freeze' it."""
-        text = to_unicode(final_text).strip()
+        text = to_unicode(final_text)
         self._last_frame = self._compose_out(text, mode="last")
 
         # Should be stopped here, otherwise prints after
@@ -241,7 +327,16 @@ class Yaspin(object):
 
             # Wait
             time.sleep(self._interval)
-            sys.stdout.write('\b')
+            sys.stdout.write("\b")
+
+    def _compose_color_func(self):
+        fn = functools.partial(
+            colored,
+            color=self._color,
+            on_color=self._on_color,
+            attrs=list(self._attrs),
+        )
+        return fn
 
     def _compose_out(self, frame, mode=None):
         # Ensure Unicode input
@@ -251,15 +346,15 @@ class Yaspin(object):
         frame = frame.encode(ENCODING) if PY2 else frame
         text = self._text.encode(ENCODING) if PY2 else self._text
 
-        if self._color and callable(self._color):
-            color_fn = self._color
-            frame = color_fn(frame)
-        if self._color and not callable(self._color):
-            frame = colored(frame, self._color)
+        # Colors
+        if self._color_func is not None:
+            frame = self._color_func(frame)
 
-        if self._right:
+        # Position
+        if self._side == "right":
             frame, text = text, frame
 
+        # Mode
         if not mode:
             out = "\r{0} {1}".format(frame, text)
         else:
@@ -270,9 +365,85 @@ class Yaspin(object):
 
         return out
 
+    def _register_signal_handlers(self):
+        # SIGKILL cannot be caught or ignored, and the receiving
+        # process cannot perform any clean-up upon receiving this
+        # signal.
+        if signal.SIGKILL in self._sigmap.keys():
+            raise ValueError(
+                "Trying to set handler for SIGKILL signal. "
+                "SIGKILL cannot be cought or ignored in POSIX systems."
+            )
+
+        for sig, sig_handler in iteritems(self._sigmap):
+            # A handler for a particular signal, once set, remains
+            # installed until it is explicitly reset. Store default
+            # signal handlers for subsequent reset at cleanup phase.
+            dfl_handler = signal.getsignal(sig)
+            self._dfl_sigmap[sig] = dfl_handler
+
+            # ``signal.SIG_DFL`` and ``signal.SIG_IGN`` are also valid
+            # signal handlers and are not callables.
+            if callable(sig_handler):
+                # ``signal.signal`` accepts handler function which is
+                # called with two arguments: signal number and the
+                # interrupted stack frame. ``functools.partial`` solves
+                # the problem of passing spinner instance into the handler
+                # function.
+                sig_handler = functools.partial(sig_handler, spinner=self)
+
+            signal.signal(sig, sig_handler)
+
+    def _reset_signal_handlers(self):
+        for sig, sig_handler in iteritems(self._dfl_sigmap):
+            signal.signal(sig, sig_handler)
+
     #
     # Static
     #
+    @staticmethod
+    def _set_color(value):
+        # type: (str) -> str
+        available_values = [k for k, v in iteritems(COLOR_MAP) if v == "color"]
+
+        if value not in available_values:
+            raise ValueError(
+                "'{0}': unsupported color value. Use one of the: {1}".format(
+                    value, ", ".join(available_values)
+                )
+            )
+        return value
+
+    @staticmethod
+    def _set_on_color(value):
+        # type: (str) -> str
+        available_values = [
+            k for k, v in iteritems(COLOR_MAP) if v == "on_color"
+        ]
+        if value not in available_values:
+            raise ValueError(
+                "'{0}': unsupported on_color value. "
+                "Use one of the: {1}".format(
+                    value, ", ".join(available_values)
+                )
+            )
+        return value
+
+    @staticmethod
+    def _set_attrs(attrs):
+        # type: (List[str]) -> Set[str]
+        available_values = [k for k, v in iteritems(COLOR_MAP) if v == "attrs"]
+
+        for attr in attrs:
+            if attr not in available_values:
+                raise ValueError(
+                    "'{0}': unsupported attribute value. "
+                    "Use one of the: {1}".format(
+                        attr, ", ".join(available_values)
+                    )
+                )
+        return set(attrs)
+
     @staticmethod
     def _set_spinner(spinner):
         if not spinner:
@@ -289,9 +460,19 @@ class Yaspin(object):
         return sp
 
     @staticmethod
-    def _set_frames(spinner, reverse):
+    def _set_side(side):
+        # type: (str) -> str
+        if side not in ("left", "right"):
+            raise ValueError(
+                "'{0}': unsupported side value. "
+                "Use either 'left' or 'right'."
+            )
+        return side
+
+    @staticmethod
+    def _set_frames(spinner, reversal):
         # type: (base_spinner.Spinner, bool) -> Union[str, List]
-        uframes = None      # unicode frames
+        uframes = None  # unicode frames
         uframes_seq = None  # sequence of unicode frames
 
         if isinstance(spinner.frames, basestring):
@@ -300,7 +481,7 @@ class Yaspin(object):
         # TODO (pavdmyt): support any type that implements iterable
         if isinstance(spinner.frames, (list, tuple)):
 
-            # Empty spinner.frames is handled by Yaspin._set_spinner
+            # Empty ``spinner.frames`` is handled by ``Yaspin._set_spinner``
             if spinner.frames and isinstance(spinner.frames[0], bytes):
                 uframes_seq = [to_unicode(frame) for frame in spinner.frames]
             else:
@@ -308,15 +489,18 @@ class Yaspin(object):
 
         _frames = uframes or uframes_seq
         if not _frames:
+            # Empty ``spinner.frames`` is handled by ``Yaspin._set_spinner``.
+            # This code is very unlikely to be executed. However, it's still
+            # here to be on a safe side.
             raise ValueError(
                 "{0!r}: no frames found in spinner".format(spinner)
             )
 
-        # Builtin reversed returns reverse iterator,
+        # Builtin ``reversed`` returns reverse iterator,
         # which adds unnecessary difficulty for returning
         # unicode value;
         # Hence using [::-1] syntax
-        frames = _frames[::-1] if reverse else _frames
+        frames = _frames[::-1] if reversal else _frames
 
         return frames
 
@@ -336,26 +520,6 @@ class Yaspin(object):
         return text
 
     @staticmethod
-    def _set_color(color):
-
-        if callable(color):
-            return color
-
-        available_text_colors = (
-            "red", "green", "yellow", "blue", "magenta", "cyan", "white",
-        )
-
-        c_lower = color.lower()
-
-        if c_lower not in available_text_colors:
-            raise ValueError(
-                "{0}: unsupported text color. Use on of the: {1}"
-                .format(c_lower, available_text_colors)
-            )
-
-        return c_lower
-
-    @staticmethod
     def _hide_cursor():
         sys.stdout.write("\033[?25l")
         sys.stdout.flush()
@@ -368,53 +532,3 @@ class Yaspin(object):
     @staticmethod
     def _clear_line():
         sys.stdout.write("\033[K")
-
-
-def yaspin(spinner=None, text='', color=None, right=False, reverse=False):
-    """Display spinner in stdout.
-
-    Can be used as a context manager or as a function decorator.
-
-    Arguments:
-        spinner (yaspin.Spinner, optional): Spinner to use.
-        text (str, optional): Text to show along with spinner.
-        color (str, callable, optional): Color or color style of the spinner.
-        right (bool, optional): Place spinner to the right end
-            of the text string.
-        reverse (bool, optional): Reverse spin direction.
-
-    Returns:
-        yaspin.Yaspin: instance of the Yaspin class.
-
-    Raises:
-        ValueError: If unsupported `color` is specified.
-
-    Example::
-
-        # Use as a context manager
-        with yaspin():
-            some_operations()
-
-        # Context manager with text
-        with yaspin(text="Processing..."):
-            some_operations()
-
-        # Context manager with custom sequence
-        with yaspin(Spinner('-\\|/', 150)):
-            some_operations()
-
-        # As decorator
-        @yaspin(text="Loading...")
-        def foo():
-            time.sleep(5)
-
-        foo()
-
-    """
-    return Yaspin(
-        spinner=spinner,
-        text=text,
-        color=color,
-        right=right,
-        reverse=reverse,
-    )

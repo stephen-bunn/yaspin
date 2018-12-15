@@ -1,20 +1,47 @@
+sudo: false
 language: python
-
-python:
-  - 2.6
-  - 2.7
-  - 3.3
-  - 3.4
-  - 3.5
-  - 3.6
-  - pypy
-  - pypy3
-
+cache: pip
+env:
+  - PYTHONHASHSEED=0
 install:
-  - pip install -r requirements-test.txt
-
-script:
-  - make coverage
-
-after_success:
-  - coveralls
+  - make travis-setup
+jobs:
+  include:
+    - stage: test
+      script:
+        - make ci
+      python: '2.7'
+    - stage: test
+      script:
+        - make ci
+      python: '3.4'
+    - stage: test
+      script:
+        - make ci
+      python: '3.5'
+    - stage: test
+      script:
+        - make ci
+      python: '3.6'
+    - stage: test
+      script:
+        - make ci
+      python: '3.7'
+      dist: xenial
+      sudo: true
+    - stage: test
+      script:
+        - make ci
+      python: 'pypy'
+    - stage: test
+      script:
+        - make ci
+      python: 'pypy3'
+    - stage: coverage
+      python:
+        - 2.7
+        - 3.6
+      script:
+        - make coverage
+      after_success:
+        - coveralls

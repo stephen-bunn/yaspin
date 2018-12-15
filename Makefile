@@ -17,6 +17,10 @@ lint:
 isort-all:
 	isort -rc --atomic --verbose setup.py $(name)/
 
+black-fmt:
+	black --line-length 79 --exclude "termcolor.py" \
+	./yaspin ./tests ./examples ./setup.py
+
 clean:
 	@echo "$(OK_COLOR)==> Cleaning up files that are already in .gitignore...$(NO_COLOR)"
 	@for pattern in `cat .gitignore`; do find . -name "*/$$pattern" -delete; done
@@ -30,11 +34,14 @@ clean-pyc:
 
 test: clean-pyc flake
 	@echo "$(OK_COLOR)==> Runnings tests ...$(NO_COLOR)"
-	@py.test
+	@py.test -n auto
+
+ci:
+	pipenv run py.test -n auto
 
 coverage: clean-pyc
 	@echo "$(OK_COLOR)==> Calculating coverage...$(NO_COLOR)"
-	@py.test --cov-report term --cov-report html --cov $(name) tests/
+	@pipenv run py.test --cov-report term --cov-report html --cov $(name) tests/
 	@echo "open file://`pwd`/htmlcov/index.html"
 
 rm-build:
@@ -64,7 +71,6 @@ tag:
 bump:
 	@bumpversion                                                  \
 		--commit                                                  \
-		--tag                                                     \
 		--current-version $(version) patch                        \
 		./$(name)/__version__.py                                  \
 		--allow-dirty
@@ -72,7 +78,13 @@ bump:
 bump-minor:
 	@bumpversion                                                  \
 		--commit                                                  \
-		--tag                                                     \
 		--current-version $(version) minor                        \
 		./$(name)/__version__.py                                  \
 		--allow-dirty
+
+travis-setup:
+	pip install pipenv --upgrade
+	pipenv install pytest~=3.6.3 --skip-lock
+	pipenv install pytest-xdist~=1.22.2 --skip-lock
+	pipenv install pytest-cov~=2.5.1 --skip-lock
+	pipenv install python-coveralls~=2.9.1 --skip-lock

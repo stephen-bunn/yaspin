@@ -11,6 +11,7 @@ from __future__ import absolute_import
 
 import codecs
 import json
+from collections import OrderedDict
 
 import pytest
 
@@ -18,13 +19,12 @@ from yaspin.compat import iteritems
 from yaspin.spinners import SPINNERS_PATH, Spinners
 
 
-with codecs.open(SPINNERS_PATH, encoding='utf-8') as f:
-    spinners_dict = json.load(f)
+with codecs.open(SPINNERS_PATH, encoding="utf-8") as f:
+    spinners_dict = OrderedDict(json.load(f))
 
 
 test_cases = [
-    (name, v["frames"], v["interval"])
-    for name, v in iteritems(spinners_dict)
+    (name, v["frames"], v["interval"]) for name, v in iteritems(spinners_dict)
 ]
 
 

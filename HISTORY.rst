@@ -1,10 +1,52 @@
 Release History
 ===============
 
+0.14.0 / 2018-09-05
+-------------------
+
+* Support for handling POSIX signals
+* New function in public API: ``kbi_safe_yaspin``
+
+
+0.13.0 / 2018-08-14
+-------------------
+
+* API improvements: ``spinner``, ``color``, ``on_color``, ``attrs`` and ``side`` argument values are handled via ``__getattr__``
+* New ``yaspin`` arguments: ``on_color``, ``attrs``
+* ``right=False`` argument replaced with ``side="left"``
+* ``Yaspin.right`` replaced with ``Yaspin.side``
+* ``reverse`` argument replaced with ``reversal``
+* ``Yaspin.reverse`` replaced with ``Yaspin.reversal``
+* Remove default text stripping in ``Yaspin._freeze``
+
+
+0.12.0 / 2018-07-16
+-------------------
+
+* Add support for Python 3.7
+* Drop support for Python 2.6 and 3.3
+
+* dev: Migrate to Pipfile
+* dev: Speedup local unittests with pytest-xdist
+
+
+0.11.1 / 2018-07-10
+-------------------
+
+* fix(#16): remove default text stripping in ``Yaspin.write`` to allow printing of the hierarchical text
+
+
+0.11.0 / 2018-06-23
+-------------------
+
+* Update cli-spinners to v1.3.1
+
+
 0.10.0 / 2018-03-23
 -------------------
 
-* New ``hide`` and ``show`` methods to toogle the display of the spinner
+* New ``hide`` and ``show`` methods to toggle the display of the spinner
+
 
 0.9.0 / 2018-02-26
 ------------------

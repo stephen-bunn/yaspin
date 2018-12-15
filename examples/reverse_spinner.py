@@ -20,12 +20,12 @@ def main():
         time.sleep(3)
 
         # Reverse spin direction
-        sp.reverse = True
+        sp.reversal = True
         sp.text = "Counterclockwise"
 
         # Counterclockwise rotation
         time.sleep(3)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
